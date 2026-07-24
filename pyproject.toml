@@ -1,0 +1,37 @@
+[project]
+name = "minerva"
+version = "0.1.0"
+description = "MINERVA — ein lokaler, sprachgesteuerter Desktop-Assistent, der den Computer bedient, die CLI nutzt, Claude Code aufruft und sich selbst erweitert."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Ahmed Trabelsi" }]
+
+dependencies = [
+    # Gehirn
+    "anthropic>=0.40",
+    "ollama>=0.4",
+    # Sprache
+    "faster-whisper>=1.0",
+    "soundfile>=0.12",
+    # Infrastruktur
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "httpx>=0.27",
+    "rich>=13.0",
+    "pynput>=1.7",
+    # GUI (i.d.R. systemweit vorhanden)
+    "PyQt6>=6.6",
+]
+
+[project.optional-dependencies]
+rag = ["qdrant-client>=1.9", "fastembed>=0.3"]
+
+[project.scripts]
+minerva = "minerva.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["minerva*"]
