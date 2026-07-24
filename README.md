@@ -173,8 +173,6 @@ sicherheitsrelevanten Aktionen landen in `~/.minerva/audit.log`.
   GNOME-Shell-Portal.
 - Minerva läuft unter **XWayland** (`QT_QPA_PLATFORM=xcb`) für ein zuverlässiges Overlay.
 
-Antworten auf deine Rückfragen und der Umsetzungsstand: siehe [ANTWORTEN.md](ANTWORTEN.md).
-
 ## Lizenz
 
 MIT — siehe [LICENSE](LICENSE).
