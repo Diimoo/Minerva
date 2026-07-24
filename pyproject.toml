@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "MINERVA — ein lokaler, sprachgesteuerter Desktop-Assistent, der den Computer bedient, die CLI nutzt, Claude Code aufruft und sich selbst erweitert."
 readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "MIT" }
 authors = [{ name = "Ahmed Trabelsi" }]
 
 dependencies = [
@@ -22,6 +23,9 @@ dependencies = [
     # GUI (i.d.R. systemweit vorhanden)
     "PyQt6>=6.6",
 ]
+
+[project.urls]
+Repository = "https://github.com/Diimoo/Minerva"
 
 [project.optional-dependencies]
 rag = ["qdrant-client>=1.9", "fastembed>=0.3"]
