@@ -31,24 +31,46 @@ HUD-Konsole den Dialog und die Werkzeug-Aktivität.
 - **Claude Code aufrufen:** delegiert große Programmieraufgaben an die `claude` CLI.
 - **Persönliches Gedächtnis:** schreibt Fakten/Präferenzen über dich als Notizen in
   `~/.minerva/memories/` und **kennt dich** beim nächsten Start wieder.
-- **Semantisches Langzeitgedächtnis (RAG):** eigenes, **persistentes** Qdrant (Docker,
-  Port 6335) über dein `rag-module`.
+- **Semantisches Langzeitgedächtnis (RAG, optional):** eigenes, **persistentes** Qdrant
+  (Docker, Port 6335) über das separate `rag-module`-Projekt — ohne es läuft Minerva
+  einfach ohne RAG.
 - **Selbstverbesserung:** schreibt neue Skills (`create_skill`) und kann ihren **eigenen
   Code** sicher upgraden (`self_upgrade`): Kopie → Claude Code → Selbsttest → Übernahme mit
   Backup/Rollback → Neustart.
 
+## Installation
+
+Voraussetzungen (Linux; entwickelt unter GNOME/Wayland):
+
+- **Python ≥ 3.11** und ein Mikrofon (PipeWire, `pw-record`)
+- **[Ollama](https://ollama.com)** für das lokale LLM — oder ein `ANTHROPIC_API_KEY`
+- Optional: `xdotool` (Maus/Tastatur-Steuerung), Docker (persistentes Qdrant für RAG),
+  GNOME-Erweiterung *AppIndicator* (Tray-Icon)
+
+```bash
+git clone https://github.com/Diimoo/Minerva.git
+cd Minerva
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+
+# Lokales Modell für das Standard-Backend:
+ollama pull qwen3.5:9b
+
+# Weibliche deutsche Piper-Stimme nach ~/.minerva/voices laden:
+python -m piper.download_voices --download-dir ~/.minerva/voices de_DE-kerstin-low
+```
+
 ## Schnellstart
 
 ```bash
-cd ~/Proj/Minerva
 ./run.sh                 # native GUI (Orb + Konsole + Tray)
 ./run.sh --cli           # Text-REPL im Terminal (ohne Qt/Audio) — ideal zum Testen
 ./run.sh --no-voice      # GUI ohne Sprache
 ./run.sh --backend anthropic --model claude-opus-4-8   # Opus (ANTHROPIC_API_KEY nötig)
 ```
 
-Minerva ist bereits als **Autostart** eingerichtet (`~/.config/autostart/minerva.desktop`)
-und startet beim nächsten Login. Deaktivieren: `./scripts/install-autostart.sh --remove`.
+Autostart beim Login: `./scripts/install-autostart.sh` einrichten, mit
+`./scripts/install-autostart.sh --remove` wieder entfernen.
 
 ### Bedienung
 
@@ -152,3 +174,7 @@ sicherheitsrelevanten Aktionen landen in `~/.minerva/audit.log`.
 - Minerva läuft unter **XWayland** (`QT_QPA_PLATFORM=xcb`) für ein zuverlässiges Overlay.
 
 Antworten auf deine Rückfragen und der Umsetzungsstand: siehe [ANTWORTEN.md](ANTWORTEN.md).
+
+## Lizenz
+
+MIT — siehe [LICENSE](LICENSE).
