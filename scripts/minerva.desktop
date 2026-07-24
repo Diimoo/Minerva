@@ -2,7 +2,8 @@
 Type=Application
 Name=Minerva
 Comment=Lokaler sprachgesteuerter Assistent
-Exec=/home/ahmed/Proj/Minerva/run.sh
+# Platzhalter — install-autostart.sh ersetzt Exec durch den echten Projektpfad.
+Exec=/path/to/Minerva/run.sh
 Icon=audio-input-microphone
 Terminal=false
 Categories=Utility;
