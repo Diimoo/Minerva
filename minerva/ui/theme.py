@@ -19,6 +19,7 @@ STATE_COLORS = {
     "idle": ACCENT_DIM,
     "listening": ACCENT,
     "hearing": ACCENT_BRIGHT,
+    "loading": QColor(180, 150, 255),
     "transcribing": QColor(90, 180, 255),
     "thinking": QColor(120, 130, 255),
     "speaking": QColor(70, 220, 200),
@@ -35,6 +36,13 @@ QWidget#hudRoot {{
 QLabel {{ color: rgb(210,235,245); }}
 QLabel#title {{ color: rgb(150,235,255); font-size: 15px; font-weight: 600; letter-spacing: 2px; }}
 QLabel#status {{ color: rgb(120,150,165); font-size: 11px; }}
+QLabel#stateLine {{
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    padding: 2px 4px 0 4px;
+    font-family: "JetBrains Mono", "DejaVu Sans Mono", monospace;
+}}
 QTextEdit {{
     background: rgba(6, 12, 18, 200);
     color: rgb(205,230,242);

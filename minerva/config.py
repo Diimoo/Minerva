@@ -42,7 +42,10 @@ DEFAULTS: dict[str, Any] = {
         "stt_model": "small",              # tiny|base|small|medium|large-v3 (gecacht)
         "stt_device": "cuda",
         "stt_compute_type": "float16",
-        "stt_language": None,              # None = automatische Spracherkennung
+        "stt_language": "de",              # feste Sprache; None = Auto-Erkennung
+                                           # (Auto verstümmelt kurze Kommandos oft)
+        "stt_hotwords": None,              # Begriffe, die Whisper bevorzugen soll
+                                           # (None = persona.name, also "Minerva")
         "mic_device": None,                # None = PipeWire-Default (pw-record)
         "vad_silence_ms": 900,             # Stille, die eine Äußerung beendet
         "vad_energy_threshold": 0.010,     # RMS-Schwelle (0..1) für Sprache
@@ -50,12 +53,15 @@ DEFAULTS: dict[str, Any] = {
         "vad_max_utterance_ms": 30000,
         "wake_words": ["minerva", "hey minerva", "hallo minerva", "okay minerva"],
         "require_wake_word": True,         # nur nach Weckwort "Minerva" reagieren
+        "wake_word_min_similarity": 0.75,  # Fuzzy-Toleranz für verhörte Weckwörter
+        "followup_window_s": 5.0,          # nach einer Antwort: so lange darf man
+                                           # OHNE Weckwort weiterreden (0 = aus)
         "tts_enabled": True,
         # TTS-Backend: "piper" (leichtgewichtig, weibliche dt. Stimme, CPU) oder
         # "higgs" (hochwertiger, GPU-Cloning-Daemon aus ~/Proj/TTS).
         "tts_backend": "piper",
         "piper_model": "~/.minerva/voices/de_DE-kerstin-low.onnx",
-        "piper_length_scale": 1.0,         # >1 = langsamer/getragener (autoritärer)
+        "piper_length_scale": 1.2,         # >1 = langsamer/getragener (autoritärer)
         "tts_url": "http://127.0.0.1:8761",   # Minervas eigener Higgs-Daemon (falls higgs)
         "tts_voice": "minerva",            # Referenzname im Higgs-voices-Ordner
         "tts_autostart": True,

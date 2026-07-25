@@ -8,11 +8,14 @@ Alle Rückmeldungen an die GUI laufen über thread-sichere Qt-Signale (Bridge).
 """
 from __future__ import annotations
 
+import difflib
 import logging
 import os
+import re
 import subprocess
 import sys
 import threading
+import time
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMenu
@@ -58,6 +61,10 @@ class JarvisApp:
         self._busy = False
         self._busy_lock = threading.Lock()
         self._was_listening = False
+        # Antwortfenster: Zeitraum nach einer Antwort, in dem eine Äußerung
+        # auch OHNE Weckwort akzeptiert wird (Sprachbeginn zählt).
+        self._followup_until = 0.0
+        self._speech_started_at = 0.0
 
         # -- Kern-Komponenten ---------------------------------------------
         self.guard = Guard(
@@ -104,6 +111,9 @@ class JarvisApp:
         self.name = cfg.get("persona.name", "Minerva")
         self.orb = AnimatedOrb(size=cfg.get("ui.orb_size", 140))
         self.hud = HudWindow()
+        self._followup_timer = QTimer()
+        self._followup_timer.setInterval(250)
+        self._followup_timer.timeout.connect(self._tick_followup)
         self.hud.set_title(self.name)
         self.tray = Tray(self)
         self.tray.setToolTip(self.name)
@@ -141,6 +151,7 @@ class JarvisApp:
         if self.mic:
             self.mic.set_active(False)
         self.orb.set_state("speaking")  # GUI-Thread (via QTimer)
+        self.hud.show_agent_state("speaking")
 
         def _resume() -> None:
             # läuft im Sprech-Thread: Zustand nur über thread-sichere Signale ändern
@@ -162,6 +173,7 @@ class JarvisApp:
             device=self.cfg.get("voice.stt_device", "cuda"),
             compute_type=self.cfg.get("voice.stt_compute_type", "float16"),
             language=self.cfg.get("voice.stt_language"),
+            hotwords=self.cfg.get("voice.stt_hotwords") or self.cfg.get("persona.name", "Minerva"),
         )
         self.mic = MicListener(
             stt=self.stt,
@@ -230,18 +242,15 @@ class JarvisApp:
             self.hud.append_system(f"{etype}: {text}")
 
     def _on_state(self, state: AgentState) -> None:
-        self.orb.set_state(state.value if isinstance(state, AgentState) else str(state))
-        label = {
-            AgentState.IDLE: "bereit",
-            AgentState.LISTENING: "höre zu…",
-            AgentState.HEARING: "nehme auf…",
-            AgentState.TRANSCRIBING: "verarbeite Sprache…",
-            AgentState.THINKING: "denke nach…",
-            AgentState.SPEAKING: "spreche…",
-            AgentState.ERROR: "Fehler",
-        }.get(state if isinstance(state, AgentState) else AgentState.IDLE, "")
-        if label:
-            self.hud.set_status(label)
+        key = state.value if isinstance(state, AgentState) else str(state)
+        if state == AgentState.HEARING:
+            # Sprachbeginn merken — entscheidet, ob eine Äußerung noch ins
+            # Antwortfenster fällt (Transkription kommt erst deutlich später).
+            self._speech_started_at = time.time()
+        if state != AgentState.LISTENING and self._followup_timer.isActive():
+            self._followup_timer.stop()
+        self.orb.set_state(key)
+        self.hud.show_agent_state(key)
 
     def _on_transcript(self, text: str) -> None:
         # Sprache erkannt -> wie Nutzereingabe behandeln.
@@ -249,29 +258,23 @@ class JarvisApp:
             return
         if self.cfg.get("voice.require_wake_word", False):
             stripped = self._apply_wake_word(text)
-            if stripped is None:
-                self.hud.append_system("(ignoriert — kein Weckwort)")
+            in_followup = 0.0 < self._speech_started_at <= self._followup_until
+            if stripped is not None:
+                text = stripped
+            elif not in_followup:
+                self.hud.append_system(f"(kein Weckwort — gehört: „{text}“)")
                 return
-            text = stripped
+            self._followup_until = 0.0
         self.hud.append_user(text)
         self._start_handling(text)
 
     def _apply_wake_word(self, text: str):
         """Gibt den Text ohne Weckwort zurück, oder None, wenn keins vorkam."""
-        low = text.lower().strip()
-        for w in self.cfg.get("voice.wake_words", []):
-            w = w.lower().strip()
-            if not w:
-                continue
-            if low.startswith(w):
-                rest = text.strip()[len(w):].lstrip(" ,.:;!?-").strip()
-                return rest or text.strip()
-            # Weckwort irgendwo am Anfang (kleine Toleranz)
-            if low[:len(w) + 6].find(w) != -1 and low.index(w) < 6:
-                idx = low.index(w) + len(w)
-                rest = text.strip()[idx:].lstrip(" ,.:;!?-").strip()
-                return rest or text.strip()
-        return None
+        return strip_wake_word(
+            text,
+            self.cfg.get("voice.wake_words", []),
+            min_ratio=self.cfg.get("voice.wake_word_min_similarity", 0.75),
+        )
 
     def _on_user_text(self, text: str) -> None:
         self.hud.append_user(text)
@@ -286,7 +289,7 @@ class JarvisApp:
         # Wiedergabe endet (bei Piper exakt, bei Higgs per Schätzung). Ein
         # Sicherheits-Timer verhindert Hängenbleiben.
         self.orb.set_state("speaking")
-        self.hud.set_status("spreche…")
+        self.hud.show_agent_state("speaking")
         spoken = _for_speech(text)
         self._finish_guard = False
 
@@ -309,10 +312,26 @@ class JarvisApp:
         if resume:
             self.mic.set_active(True)
             self.orb.set_state("listening")
-            self.hud.set_status("höre zu…")
+            self.hud.show_agent_state("listening")
+            # Antwortfenster öffnen: kurz ohne Weckwort weiterreden können.
+            window = float(self.cfg.get("voice.followup_window_s", 5.0))
+            if window > 0 and self.cfg.get("voice.require_wake_word", False):
+                self._followup_until = time.time() + window
+                self._followup_timer.start()
+                self._tick_followup()
         else:
             self.orb.set_state("idle")
-            self.hud.set_status("bereit")
+            self.hud.show_agent_state("idle")
+
+    def _tick_followup(self) -> None:
+        remaining = self._followup_until - time.time()
+        if self._busy or remaining <= 0 or not (self.mic and self.mic.active):
+            self._followup_timer.stop()
+            if not self._busy:
+                self.hud.show_agent_state(
+                    "listening" if (self.mic and self.mic.active) else "idle")
+            return
+        self.hud.show_followup(remaining)
 
     def _on_busy_changed(self, busy: bool) -> None:
         self.hud.input.setEnabled(not busy)
@@ -462,6 +481,27 @@ class JarvisApp:
 
 
 # ---------------------------------------------------------------------- Helfer
+def strip_wake_word(text: str, wake_words: list[str], min_ratio: float = 0.75):
+    """Entfernt ein Weckwort am Äußerungsanfang; None, wenn keins vorkam.
+
+    Whisper transkribiert Eigennamen nicht immer exakt („Minerwa", „Mineva",
+    „Minärva"). Deshalb werden Wortfenster der ersten drei Wörter fuzzy
+    (difflib) gegen die Weckwörter verglichen, statt exakt zu matchen.
+    """
+    matches = list(re.finditer(r"[\w]+", text, flags=re.UNICODE))
+    words = [m.group(0).lower() for m in matches]
+    # Längere Weckwörter zuerst („hey minerva" vor „minerva").
+    for wake in sorted({w.lower().strip() for w in wake_words if w.strip()},
+                       key=lambda w: -len(w.split())):
+        n = len(wake.split())
+        for start in range(min(3, len(words) - n + 1)):
+            cand = " ".join(words[start:start + n])
+            if cand == wake or difflib.SequenceMatcher(None, cand, wake).ratio() >= min_ratio:
+                rest = text[matches[start + n - 1].end():].lstrip(" ,.:;!?-–—").strip()
+                return rest or text.strip()
+    return None
+
+
 def _state_from_str(name: str) -> AgentState:
     try:
         return AgentState(name)

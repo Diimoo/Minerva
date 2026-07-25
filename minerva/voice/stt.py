@@ -26,13 +26,19 @@ FRAME_BYTES = FRAME_SAMPLES * 2               # s16 mono
 
 class STTEngine:
     def __init__(self, model: str = "small", device: str = "cuda",
-                 compute_type: str = "float16", language: Optional[str] = None) -> None:
+                 compute_type: str = "float16", language: Optional[str] = None,
+                 hotwords: Optional[str] = None) -> None:
         self.model_name = model
         self.device = device
         self.compute_type = compute_type
         self.language = language
+        self.hotwords = hotwords
         self._model = None
         self._lock = threading.Lock()
+
+    @property
+    def loaded(self) -> bool:
+        return self._model is not None
 
     def _ensure(self) -> None:
         if self._model is not None:
@@ -61,6 +67,9 @@ class STTEngine:
                 beam_size=5,
                 vad_filter=True,
                 condition_on_previous_text=False,
+                # Biast die Dekodierung Richtung Eigennamen wie "Minerva",
+                # die Whisper sonst gern falsch buchstabiert.
+                hotwords=self.hotwords,
             )
             return "".join(s.text for s in segments).strip()
         except Exception as exc:  # noqa: BLE001
@@ -222,7 +231,9 @@ class MicListener(threading.Thread):
 
     def _finalize(self, frames: list[bytes]) -> None:
         pcm = b"".join(frames)
-        self.on_state("transcribing")
+        # Beim allerersten Lauf lädt faster-whisper das Modell — das dauert
+        # spürbar; der eigene Zustand macht das in der UI sichtbar.
+        self.on_state("transcribing" if self.stt.loaded else "loading")
         text = self.stt.transcribe_pcm(pcm)
         self.on_state("listening" if self.active else "idle")
         text = (text or "").strip()

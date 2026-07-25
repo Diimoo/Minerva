@@ -1,8 +1,8 @@
 """HUD-Konsole: Dialog-Verlauf, Werkzeug-Aktivität, Status und Texteingabe."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QPoint, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QTextCursor
+from PyQt6.QtCore import QPoint, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -65,6 +65,18 @@ class HudWindow(QWidget):
         self.log.setReadOnly(True)
         root.addWidget(self.log, 1)
 
+        # Statuszeile: zeigt animiert, was Minerva gerade tut (hört zu, denkt …)
+        self.state_line = QLabel("● bereit")
+        self.state_line.setObjectName("stateLine")
+        root.addWidget(self.state_line)
+        self._anim_frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        self._anim_i = 0
+        self._anim_mode = "static"          # static | spin | pulse
+        self._anim_text = "bereit"
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(140)
+        self._anim_timer.timeout.connect(self._render_state_line)
+
         # Eingabe
         input_row = QHBoxLayout()
         self.input = QLineEdit()
@@ -93,8 +105,9 @@ class HudWindow(QWidget):
 
     # -- Verlauf-API -------------------------------------------------------
     def _append_html(self, html: str) -> None:
-        self.log.moveCursor(QTextCursor.MoveOperation.End)
-        self.log.insertHtml(html)
+        # append() beginnt immer einen NEUEN Absatz — insertHtml() an der
+        # Cursor-Position würde Einträge in derselben Zeile aneinanderkleben.
+        self.log.append(html)
         self.log.moveCursor(QTextCursor.MoveOperation.End)
         self.log.ensureCursorVisible()
 
@@ -121,33 +134,82 @@ class HudWindow(QWidget):
         if self._assistant_open:
             return
         c = _hex(theme.OK)
-        self._append_html(f'<div style="margin:6px 0;"><b style="color:{c}">MINERVA ▸ </b>'
-                          f'<span style="color:{_hex(theme.TEXT)}">')
+        self._append_html(f'<div style="margin:6px 0;"><b style="color:{c}">MINERVA ▸ </b></div>')
         self._assistant_open = True
 
     def append_assistant_token(self, token: str) -> None:
         if not self._assistant_open:
             self.start_assistant()
-        # Roh einfügen (kein HTML-Umbruch pro Token, um Performance zu halten).
-        self.log.moveCursor(QTextCursor.MoveOperation.End)
-        self.log.insertPlainText(token)
-        self.log.moveCursor(QTextCursor.MoveOperation.End)
+        # Tokens als Klartext in den offenen Absatz streamen — mit explizitem
+        # Format, damit sie nicht das fette/grüne Label-Format erben.
+        cursor = self.log.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        fmt = QTextCharFormat()
+        fmt.setForeground(theme.TEXT)
+        fmt.setFontWeight(QFont.Weight.Normal)
+        cursor.setCharFormat(fmt)
+        cursor.insertText(token)
+        self.log.setTextCursor(cursor)
         self.log.ensureCursorVisible()
 
     def _close_assistant(self) -> None:
-        if self._assistant_open:
-            self._append_html("</span></div>")
-            self._assistant_open = False
+        # Kein schließendes HTML nötig — jeder Eintrag ist ein eigener Absatz.
+        self._assistant_open = False
 
     def end_assistant(self) -> None:
         self._close_assistant()
 
     # -- Status ------------------------------------------------------------
+    # Ansicht je Agent-Zustand: (Text, Farbe, Animationsmodus)
+    _STATE_VIEWS = {
+        "idle":         ("bereit", theme.MUTED, "static"),
+        "listening":    ("höre zu…", theme.ACCENT, "pulse"),
+        "hearing":      ("nehme auf…", theme.ACCENT_BRIGHT, "pulse"),
+        "loading":      ("lade Sprachmodell…", theme.STATE_COLORS["loading"], "spin"),
+        "transcribing": ("verarbeite Sprache…", theme.STATE_COLORS["transcribing"], "spin"),
+        "thinking":     ("denke nach…", theme.STATE_COLORS["thinking"], "spin"),
+        "speaking":     ("spreche…", theme.OK, "pulse"),
+        "error":        ("Fehler", theme.DANGER, "static"),
+    }
+
     def set_title(self, name: str) -> None:
         self.title_label.setText(f"◈ {name.upper()}")
 
     def set_status(self, text: str) -> None:
         self.status.setText(text)
+
+    def show_agent_state(self, key: str) -> None:
+        """Große Statuszeile + Mini-Status im Header für einen Agent-Zustand."""
+        text, color, mode = self._STATE_VIEWS.get(key, ("bereit", theme.MUTED, "static"))
+        self._set_state_line(text, color, mode)
+        self.set_status(text)
+
+    def show_followup(self, seconds_left: float) -> None:
+        """Antwortfenster nach einer Antwort: Zuhören ohne Weckwort, mit Countdown."""
+        secs = max(0, int(seconds_left + 0.999))
+        self._set_state_line(f"höre zu — antworten ohne Weckwort ({secs} s)",
+                             theme.ACCENT, "pulse")
+        self.set_status("höre zu…")
+
+    def _set_state_line(self, text: str, color: QColor, mode: str) -> None:
+        self._anim_text = text
+        self._anim_mode = mode
+        self.state_line.setStyleSheet(f"color: {_hex(color)};")
+        if mode == "static":
+            self._anim_timer.stop()
+        elif not self._anim_timer.isActive():
+            self._anim_timer.start()
+        self._render_state_line()
+
+    def _render_state_line(self) -> None:
+        self._anim_i += 1
+        if self._anim_mode == "spin":
+            icon = self._anim_frames[self._anim_i % len(self._anim_frames)]
+        elif self._anim_mode == "pulse":
+            icon = "◉" if self._anim_i % 2 else "○"
+        else:
+            icon = "●"
+        self.state_line.setText(f"{icon} {self._anim_text}")
 
     def set_listening(self, active: bool) -> None:
         self.listen_btn.setText("🔴 Höre zu…" if active else "🎤 Zuhören")
