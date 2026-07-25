@@ -40,11 +40,14 @@ def _apply_cli_overrides(cfg, args) -> None:
     if args.backend:
         cfg.set("brain.backend", args.backend)
     if args.model:
-        # Modell für das aufgelöste Backend setzen.
-        if resolve_brain_backend(cfg) == "anthropic":
-            cfg.set("brain.anthropic_model", args.model)
-        else:
-            cfg.set("brain.model", args.model)
+        # Modell für das aufgelöste Backend setzen. Jedes Backend hat einen
+        # eigenen Schlüssel — ohne die Zuordnung landete '--model' bei
+        # 'claude_code' wirkungslos in der Ollama-Einstellung.
+        key = {
+            "anthropic": "brain.anthropic_model",
+            "claude_code": "brain.claude_code_model",
+        }.get(resolve_brain_backend(cfg), "brain.model")
+        cfg.set(key, args.model)
     if args.mode:
         cfg.set("safety.mode", args.mode)
     if args.no_voice:
@@ -191,7 +194,8 @@ def main() -> int:
     parser.add_argument("--cli", action="store_true", help="Text-REPL statt GUI.")
     parser.add_argument("--selftest", action="store_true", help="Validierungslauf (für Selbst-Upgrade).")
     parser.add_argument("--no-voice", action="store_true", help="GUI ohne Sprachein-/ausgabe.")
-    parser.add_argument("--backend", choices=["auto", "ollama", "anthropic"], help="Gehirn-Backend.")
+    parser.add_argument("--backend", choices=["auto", "ollama", "anthropic", "claude_code"],
+                        help="Gehirn-Backend.")
     parser.add_argument("--model", help="Modellname für das gewählte Backend.")
     parser.add_argument("--mode", choices=["guarded", "readonly", "yolo"], help="Sicherheitsmodus.")
     parser.add_argument("-v", "--verbose", action="store_true", help="Ausführliche Logs.")

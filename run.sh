@@ -5,6 +5,7 @@
 #   ./run.sh --cli        # Text-REPL im Terminal
 #   ./run.sh --no-voice   # GUI ohne Sprache
 #   ./run.sh --backend anthropic   # Anthropic-API statt Ollama (ANTHROPIC_API_KEY nötig)
+#   ./run.sh --backend claude_code # Claude über das Pro/Max-Abo (kein API-Key nötig)
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE"
