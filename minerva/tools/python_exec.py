@@ -35,8 +35,12 @@ class PythonEvalTool(Tool):
         code = args.get("code", "")
         if not code.strip():
             return ToolResult(False, "Kein Code.")
+        # DANGEROUS, nicht MODERATE: beliebiger Python-Code kann alles, was die
+        # Shell kann (os.system, shutil.rmtree …). Als MODERATE lief er im
+        # guarded-Modus ohne Rückfrage durch und umging damit die gesamte
+        # Shell-Klassifikation des Guards. Siehe .bughunter/findings F3.
         decision = ctx.guard.review(
-            "python", "Python-Ausführung", code[:400], Risk.MODERATE
+            "python", "Python-Ausführung", code[:400], Risk.DANGEROUS
         )
         if not decision.allowed:
             return ToolResult(False, f"Abgelehnt: {decision.reason}")

@@ -14,6 +14,7 @@ Guard (im yolo-Modus ohne Rückfrage, aber protokolliert).
 """
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -25,7 +26,20 @@ from .. import MINERVA_HOME, PROJECT_ROOT
 from ..safety.guard import Risk
 from .registry import Tool, ToolContext, ToolResult
 
+log = logging.getLogger("minerva.tools.selfupgrade")
+
 EXCLUDES = [".venv", ".git", "__pycache__", "screenshots", "logs", "*.pyc", ".mypy_cache"]
+
+
+def _rollback_failed(backup: Path, why: str) -> str:
+    """Meldung für den schlimmsten Fall: defekt UND Rollback gescheitert."""
+    return (
+        f"{why}\n\n"
+        f"ACHTUNG: Der automatische Rollback ist EBENFALLS fehlgeschlagen. "
+        f"Der Projektordner kann in einem inkonsistenten Zustand sein. "
+        f"Das Backup liegt unter {backup} — bitte von Hand zurückspielen, z. B.:\n"
+        f"  rsync -a --delete --exclude .venv --exclude .git {backup}/ {PROJECT_ROOT}/"
+    )
 
 
 def _copy_tree(src: Path, dst: Path) -> None:
@@ -146,14 +160,17 @@ class SelfUpgradeTool(Tool):
         try:
             _sync_into(work, PROJECT_ROOT)
         except Exception as exc:  # noqa: BLE001
-            _restore(backup, PROJECT_ROOT)
-            return ToolResult(False, f"Übernahme fehlgeschlagen, zurückgerollt: {exc}")
+            if _restore(backup, PROJECT_ROOT):
+                return ToolResult(False, f"Übernahme fehlgeschlagen, zurückgerollt: {exc}")
+            return ToolResult(False, _rollback_failed(backup, f"Übernahme fehlgeschlagen: {exc}"))
 
         ok2, test_out2 = _selftest(PROJECT_ROOT)
         if not ok2:
             ctx.emit("warn", "Selbst-Upgrade: Validierung nach Übernahme fehlgeschlagen — Rollback.")
-            _restore(backup, PROJECT_ROOT)
-            return ToolResult(False, f"Nach Übernahme defekt — automatisch zurückgerollt.\n{test_out2}")
+            if _restore(backup, PROJECT_ROOT):
+                return ToolResult(False, f"Nach Übernahme defekt — automatisch zurückgerollt.\n{test_out2}")
+            ctx.emit("error", "Selbst-Upgrade: ROLLBACK FEHLGESCHLAGEN — Handarbeit nötig!")
+            return ToolResult(False, _rollback_failed(backup, f"Nach Übernahme defekt.\n{test_out2}"))
 
         # 6) Erfolg — optional Neustart
         msg = (f"Selbst-Upgrade erfolgreich übernommen (Backup: {backup}). "
@@ -189,8 +206,20 @@ def _sync_into(src: Path, dst: Path) -> None:
                 shutil.copy2(item, target)
 
 
-def _restore(backup: Path, dst: Path) -> None:
+def _restore(backup: Path, dst: Path) -> bool:
+    """Rollt aus dem Backup zurück. Gibt zurück, ob es geklappt hat.
+
+    Vorher wurde jede Ausnahme geschluckt und der Aufrufer meldete dem Nutzer
+    trotzdem „automatisch zurückgerollt" — auf dem sicherheitskritischsten Pfad
+    des Projekts also möglicherweise eine Lüge. Siehe Fund F10.
+
+    Wirft weiterhin nicht: der Aufrufer steckt schon im Fehlerfall, und eine
+    zweite Ausnahme würde die Meldung ganz verhindern. Er muss den Rückgabewert
+    auswerten.
+    """
     try:
         _sync_into(backup, dst)
-    except Exception:  # noqa: BLE001
-        pass
+        return True
+    except Exception as exc:  # noqa: BLE001
+        log.error("Rollback aus %s nach %s fehlgeschlagen: %s", backup, dst, exc)
+        return False

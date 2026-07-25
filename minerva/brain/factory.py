@@ -22,6 +22,17 @@ def build_backend(cfg: Config) -> LLMBackend:
             max_tokens=cfg.get("brain.max_tokens", 2048),
         )
 
+    if backend == "claude_code":
+        from .claude_code_backend import ClaudeCodeBackend
+
+        model = cfg.get("brain.claude_code_model") or None
+        log.info("Gehirn: Claude Code über Abo (%s)", model or "CLI-Vorgabe")
+        return ClaudeCodeBackend(
+            model=model,
+            effort=cfg.get("brain.claude_code_effort") or None,
+            timeout=cfg.get("brain.claude_code_timeout", 300),
+        )
+
     from .ollama_backend import OllamaBackend
 
     log.info("Gehirn: Ollama (%s)", cfg.get("brain.model"))

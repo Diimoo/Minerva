@@ -1,10 +1,15 @@
 """Konfiguration: lädt config.yaml + .env, mit sinnvollen Defaults.
 
 Auswahl des Gehirns:
-  brain.backend = "auto" | "ollama" | "anthropic"
-    * "auto"      -> Anthropic, falls ANTHROPIC_API_KEY gesetzt, sonst Ollama.
-    * "ollama"    -> immer lokal.
-    * "anthropic" -> immer API (benötigt Key).
+  brain.backend = "auto" | "ollama" | "anthropic" | "claude_code"
+    * "auto"        -> Anthropic, falls ANTHROPIC_API_KEY gesetzt, sonst Ollama.
+    * "ollama"      -> immer lokal.
+    * "anthropic"   -> immer API (benötigt Key, wird pro Token abgerechnet).
+    * "claude_code" -> Claude über das Agent SDK, also über das Pro/Max-ABO
+                       (kein API-Key nötig). Bewusst NICHT Teil von "auto":
+                       das Abo hat Rate-Limits, die ein Assistent mit Weckwort
+                       sonst bei jeder Beiläufigkeit anknabbert. Ollama bleibt
+                       das Alltags-Gehirn, claude_code wird gezielt gewählt.
 
 Alle Werte lassen sich per Env-Var überschreiben (Präfix MINERVA_,
 Punkte werden zu Unterstrichen: brain.model -> MINERVA_BRAIN_MODEL).
@@ -21,16 +26,31 @@ import yaml
 
 from . import CONFIG_PATH, MINERVA_HOME, ensure_dirs
 
+class ConfigError(Exception):
+    """Die Konfiguration ist unlesbar oder syntaktisch defekt.
+
+    Bewusst fail-loud statt stiller Rückfall auf DEFAULTS: ein ignoriertes
+    config.yaml würde z. B. safety.mode heimlich zurücksetzen. Die Meldung
+    nennt immer den Pfad, damit der Handeditier-Fehler auffindbar ist.
+    """
+
+
 # --------------------------------------------------------------------------
 # Default-Konfiguration. Bewusst konservativ & lokal-first.
 # --------------------------------------------------------------------------
 DEFAULTS: dict[str, Any] = {
     "brain": {
-        "backend": "auto",                 # auto | ollama | anthropic
+        "backend": "auto",                 # auto | ollama | anthropic | claude_code
         # Ollama-Default: qwen3.5:9b liefert zuverlässig STRUKTURIERTE Tool-Calls
         # (getestet), ist schnell und lässt neben STT/TTS genug VRAM frei.
         "model": "qwen3.5:9b",
         "anthropic_model": "claude-opus-4-8",  # bei gesetztem Key (z. B. für Opus)
+        # Claude über das Abo (backend = "claude_code"). None = Vorgabe der
+        # `claude` CLI übernehmen, statt hier eine Modell-ID zu pinnen, die
+        # bei jedem Upstream-Wechsel veraltet.
+        "claude_code_model": None,
+        "claude_code_effort": None,        # None | low | medium | high | xhigh | max
+        "claude_code_timeout": 300,        # Sekunden pro Denk-Schritt
         "ollama_host": "http://127.0.0.1:11434",
         "temperature": 0.4,
         "max_tokens": 2048,
@@ -237,8 +257,23 @@ def load_config(path: Path | None = None) -> Config:
     cfg_path = path or CONFIG_PATH
     user_cfg: dict = {}
     if cfg_path.exists():
-        with open(cfg_path, encoding="utf-8") as f:
-            user_cfg = yaml.safe_load(f) or {}
+        # Die Datei ist zum Handeditieren gedacht, also muss ein Tippfehler
+        # sagen, WO er steckt. Vorher propagierte der rohe yaml.ScannerError
+        # bis zum Top-Level. Siehe .bughunter/findings F5.
+        try:
+            with open(cfg_path, encoding="utf-8") as f:
+                user_cfg = yaml.safe_load(f) or {}
+        except yaml.YAMLError as exc:
+            raise ConfigError(
+                f"{cfg_path} ist kein gültiges YAML: {exc}"
+            ) from exc
+        except OSError as exc:
+            raise ConfigError(f"{cfg_path} nicht lesbar: {exc}") from exc
+        if not isinstance(user_cfg, dict):
+            raise ConfigError(
+                f"{cfg_path} muss eine YAML-Abbildung enthalten, "
+                f"gefunden: {type(user_cfg).__name__}"
+            )
 
     merged = _deep_merge(DEFAULTS, user_cfg)
     merged = _apply_env_overrides(merged)
@@ -254,7 +289,12 @@ def load_config(path: Path | None = None) -> Config:
 
 
 def resolve_brain_backend(cfg: Config) -> str:
-    """Löst 'auto' zu 'anthropic'/'ollama' auf."""
+    """Löst 'auto' zu 'anthropic'/'ollama' auf.
+
+    'claude_code' ist absichtlich nicht Teil der Auto-Erkennung — es läuft über
+    das Pro/Max-Abo und damit gegen dessen Rate-Limits. Wer es will, setzt
+    brain.backend ausdrücklich (oder MINERVA_BRAIN_BACKEND=claude_code).
+    """
     backend = cfg.get("brain.backend", "auto")
     if backend == "auto":
         return "anthropic" if os.environ.get("ANTHROPIC_API_KEY") else "ollama"

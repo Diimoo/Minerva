@@ -30,6 +30,16 @@ Repository = "https://github.com/Diimoo/Minerva"
 
 [project.optional-dependencies]
 rag = ["qdrant-client>=1.9", "fastembed>=0.3"]
+# Gehirn über Claude Code (brain.backend = "claude_code"). Läuft über das
+# Pro/Max-Abo, braucht also keinen ANTHROPIC_API_KEY — aber eine
+# eingerichtete `claude` CLI.
+claude-code = ["claude-agent-sdk>=0.2.128"]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Kurze Tracebacks: die Suite ist Regressionsschutz, keine Lesestoff-Sammlung.
+addopts = "-q --tb=short"
 
 [project.scripts]
 minerva = "minerva.__main__:main"

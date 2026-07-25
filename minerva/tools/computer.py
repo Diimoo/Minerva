@@ -92,6 +92,18 @@ class ScreenshotTool(Tool):
     }
 
     def run(self, args, ctx: ToolContext):
+        # DANGEROUS: der Bildschirm kann Passwörter, private Nachrichten und
+        # Bankdaten zeigen, und mit 'question' geht das Bild an ein Modell.
+        # Vorher fehlte hier jede Guard-Abfrage — siehe Fund F7.
+        question = args.get("question")
+        decision = ctx.guard.review(
+            "computer", "Bildschirm aufnehmen",
+            f"question={question!r}" if question else "(nur Screenshot)",
+            Risk.DANGEROUS,
+        )
+        if not decision.allowed:
+            return ToolResult(False, f"Abgelehnt: {decision.reason}")
+
         ts = time.strftime("%Y%m%d-%H%M%S")
         dest = SHOT_DIR / f"shot-{ts}.png"
         ok, backend = _capture_screenshot(dest)
@@ -99,7 +111,6 @@ class ScreenshotTool(Tool):
             return ToolResult(False, f"Screenshot fehlgeschlagen: {backend}")
         info = f"Screenshot gespeichert: {dest} (via {backend})"
 
-        question = args.get("question")
         if not question:
             return ToolResult(True, info)
 
@@ -133,14 +144,14 @@ class ClickTool(Tool):
     }
 
     def run(self, args, ctx: ToolContext):
-        if not _have("xdotool"):
-            return ToolResult(False, "xdotool nicht installiert.")
         x, y = int(args["x"]), int(args["y"])
         button = int(args.get("button", 1))
         clicks = 2 if args.get("double") else 1
         decision = ctx.guard.review("computer", "Mausklick", f"({x},{y}) button={button}", Risk.MODERATE)
         if not decision.allowed:
             return ToolResult(False, f"Abgelehnt: {decision.reason}")
+        if not _have("xdotool"):
+            return ToolResult(False, "xdotool nicht installiert.")
         cmd = ["xdotool", "mousemove", str(x), str(y), "click", "--repeat", str(clicks), str(button)]
         r = subprocess.run(cmd, capture_output=True, text=True)
         return ToolResult(r.returncode == 0, f"Klick auf ({x},{y})" if r.returncode == 0 else r.stderr)
@@ -156,12 +167,12 @@ class TypeTextTool(Tool):
     }
 
     def run(self, args, ctx: ToolContext):
-        if not _have("xdotool"):
-            return ToolResult(False, "xdotool nicht installiert.")
         text = args.get("text", "")
         decision = ctx.guard.review("computer", "Text tippen", text[:120], Risk.DANGEROUS)
         if not decision.allowed:
             return ToolResult(False, f"Abgelehnt: {decision.reason}")
+        if not _have("xdotool"):
+            return ToolResult(False, "xdotool nicht installiert.")
         r = subprocess.run(["xdotool", "type", "--clearmodifiers", "--", text], capture_output=True, text=True)
         return ToolResult(r.returncode == 0, f"Getippt ({len(text)} Zeichen)" if r.returncode == 0 else r.stderr)
 
@@ -176,12 +187,14 @@ class KeyPressTool(Tool):
     }
 
     def run(self, args, ctx: ToolContext):
-        if not _have("xdotool"):
-            return ToolResult(False, "xdotool nicht installiert.")
         keys = args.get("keys", "")
-        decision = ctx.guard.review("computer", "Taste drücken", keys, Risk.MODERATE)
+        # DANGEROUS wie type_text: `xdotool key a b c` sendet Zeichen, press_key
+        # war damit die laxere Tür zur selben Wirkung. Siehe Fund F9.
+        decision = ctx.guard.review("computer", "Taste drücken", keys, Risk.DANGEROUS)
         if not decision.allowed:
             return ToolResult(False, f"Abgelehnt: {decision.reason}")
+        if not _have("xdotool"):
+            return ToolResult(False, "xdotool nicht installiert.")
         r = subprocess.run(["xdotool", "key", "--clearmodifiers", keys], capture_output=True, text=True)
         return ToolResult(r.returncode == 0, f"Gedrückt: {keys}" if r.returncode == 0 else r.stderr)
 
@@ -200,6 +213,19 @@ class ClipboardTool(Tool):
 
     def run(self, args, ctx: ToolContext):
         action = args.get("action")
+        # Vorher ohne jede Guard-Abfrage — siehe Fund F8. 'get' ist der
+        # riskantere Weg: Passwort-Manager legen Geheimnisse in die
+        # Zwischenablage, das Lesen ist also ein Exfiltrationspfad. 'set'
+        # verändert Systemzustand und gehört damit nicht in den readonly-Modus.
+        decision = ctx.guard.review(
+            "computer",
+            "Zwischenablage lesen" if action == "get" else "Zwischenablage setzen",
+            f"action={action!r}",
+            Risk.DANGEROUS if action == "get" else Risk.MODERATE,
+        )
+        if not decision.allowed:
+            return ToolResult(False, f"Abgelehnt: {decision.reason}")
+
         if action == "get":
             for cmd in (["wl-paste", "-n"], ["xclip", "-selection", "clipboard", "-o"]):
                 if _have(cmd[0]):
@@ -233,10 +259,17 @@ class NotifyTool(Tool):
     }
 
     def run(self, args, ctx: ToolContext):
-        if not _have("notify-send"):
-            return ToolResult(False, "notify-send nicht installiert.")
         title = args.get("title", "MINERVA")
         message = args.get("message", "")
+        # SAFE, aber protokolliert: harmlos in der Wirkung, gehört trotzdem ins
+        # Audit-Log. Autorisierung vor Fähigkeitsprüfung (Fund F8, geringes Gewicht).
+        decision = ctx.guard.review(
+            "computer", "Benachrichtigung anzeigen", f"{title}: {message[:80]}", Risk.SAFE
+        )
+        if not decision.allowed:
+            return ToolResult(False, f"Abgelehnt: {decision.reason}")
+        if not _have("notify-send"):
+            return ToolResult(False, "notify-send nicht installiert.")
         subprocess.run(["notify-send", title, message], capture_output=True)
         return ToolResult(True, "Benachrichtigung angezeigt.")
 
@@ -307,10 +340,16 @@ class VolumeTool(Tool):
     }
 
     def run(self, args, ctx: ToolContext):
+        action = args.get("action")
+        # Verändert Systemzustand -> MODERATE, vorher ungeprüft (Fund F8).
+        decision = ctx.guard.review(
+            "computer", "Lautstärke ändern", f"action={action!r}", Risk.MODERATE
+        )
+        if not decision.allowed:
+            return ToolResult(False, f"Abgelehnt: {decision.reason}")
         if not _have("wpctl"):
             return ToolResult(False, "wpctl (PipeWire) nicht verfügbar.")
         sink = "@DEFAULT_AUDIO_SINK@"
-        action = args.get("action")
         value = int(args.get("value", 5))
         try:
             if action == "set":
