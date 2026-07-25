@@ -151,7 +151,6 @@ minerva/
 └─ ui/             orb · hud · tray · confirm · theme (PyQt6)
 
 tests/            Regressionssuite für Guard, Config und Selbst-Upgrade
-.bughunter/       Inventar und Befunde des Code-Audits
 ```
 
 ### Gehirn über Claude Code
